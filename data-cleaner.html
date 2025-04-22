@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Cleaning & Validation Tool</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #0056b3; /* A nice blue */
+            border-bottom: 2px solid #eee;
+            padding-bottom: 5px;
+            margin-bottom: 15px;
+        }
+        .upload-section, .results-section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background-color: #e9ecef;
+            border: 1px solid #ced4da;
+            border-radius: 5px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            display: block;
+            margin-bottom: 15px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: calc(100% - 18px); /* Account for padding */
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 15px;
+            font-style: italic;
+            color: #666;
+        }
+        #report, #cleaned-data-preview {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+            max-height: 400px; /* Limit height for long reports */
+            overflow-y: auto; /* Add scrollbar if needed */
+        }
+        #report ul, #report li {
+             margin-bottom: 5px;
+        }
+        #report code, .code {
+            background-color: #e2e2e2;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 0.9em;
+        }
+        th {
+            background-color: #e9ecef;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+         .highlight-issue {
+             background-color: #fff3cd; /* Light yellow for attention */
+             font-weight: bold;
+         }
+         .highlight-change {
+             background-color: #d1ecf1; /* Light blue for changes */
+         }
+         .error {
+             color: #dc3545;
+             font-weight: bold;
+         }
+         .download-button {
+             margin-top: 15px;
+             background-color: #28a745; /* Green */
+         }
+         .download-button:hover {
+             background-color: #218838;
+         }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Customer Data Cleaning & Validation Tool</h1>
+
+        <div class="upload-section">
+            <h2>1. Upload Spreadsheet</h2>
+            <label for="csvFile">Select a CSV file:</label>
+            <input type="file" id="csvFile" name="csvFile" accept=".csv">
+
+            <label for="nameColumn">Column with Customer Name:</label>
+            <input type="text" id="nameColumn" value="Name"> <!-- Default value -->
+
+            <label for="addressColumn">Column with Address:</label>
+            <input type="text" id="addressColumn" value="Address"> <!-- Default value -->
+
+            <label for="dateColumn">Column with Date (optional):</label>
+            <input type="text" id="dateColumn" value="Join Date"> <!-- Default value -->
+
+            <button id="processButton">Process File</button>
+            <div id="status">Select a file and click Process.</div>
+        </div>
+
+        <div class="results-section" id="resultsSection" style="display: none;">
+            <h2>2. Results</h2>
+            <div id="report">
+                <h3>Processing Report</h3>
+                <!-- Report content will be generated here -->
+            </div>
+            <div id="cleaned-data-preview">
+                <h3>Cleaned Data Preview (First 10 rows)</h3>
+                <table id="previewTable">
+                    <!-- Table content will be generated here -->
+                </table>
+                 <button id="downloadCsvButton" class="download-button" style="display: none;">Download Cleaned CSV</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const csvFileInput = document.getElementById('csvFile');
+        const processButton = document.getElementById('processButton');
+        const statusDiv = document.getElementById('status');
+        const reportDiv = document.getElementById('report');
+        const previewTable = document.getElementById('previewTable');
+        const resultsSection = document.getElementById('resultsSection');
+        const cleanedDataPreviewDiv = document.getElementById('cleaned-data-preview');
+        const nameColumnInput = document.getElementById('nameColumn');
+        const addressColumnInput = document.getElementById('addressColumn');
+        const dateColumnInput = document.getElementById('dateColumn');
+        const downloadCsvButton = document.getElementById('downloadCsvButton');
+
+        let originalData = [];
+        let cleanedData = [];
+        let headers = [];
+        let reportLog = {
+            changes: [],
+            manualReview: [],
+            duplicates: []
+        };
+
+        processButton.addEventListener('click', handleFileProcessing);
+        downloadCsvButton.addEventListener('click', downloadCleanedCsv);
+
+        function handleFileProcessing() {
+            const file = csvFileInput.files[0];
+            const nameCol = nameColumnInput.value.trim();
+            const addressCol = addressColumnInput.value.trim();
+            const dateCol = dateColumnInput.value.trim(); // Optional
+
+            if (!file) {
+                updateStatus('Please select a CSV file first.', 'error');
+                return;
+            }
+            if (!nameCol || !addressCol) {
+                 updateStatus('Please specify the Name and Address column headers.', 'error');
+                 return;
+            }
+
+            updateStatus('Reading file...');
+            processButton.disabled = true;
+            resultsSection.style.display = 'none'; // Hide previous results
+            reportLog = { changes: [], manualReview: [], duplicates: [] }; // Reset log
+
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                try {
+                    updateStatus('Parsing CSV...');
+                    const csvData = event.target.result;
+                    const parseResult = parseCSV(csvData);
+                    if (!parseResult) return; // Error handled in parseCSV
+
+                    originalData = parseResult.data;
+                    headers = parseResult.headers;
+
+                     // Validate column names
+                    if (!headers.includes(nameCol)) {
+                        updateStatus(`Error: Column header '${nameCol}' not found in the CSV. Found: ${headers.join(', ')}`, 'error');
+                        processButton.disabled = false;
+                        return;
+                    }
+                    if (!headers.includes(addressCol)) {
+                        updateStatus(`Error: Column header '${addressCol}' not found in the CSV. Found: ${headers.join(', ')}`, 'error');
+                        processButton.disabled = false;
+                        return;
+                    }
+                     if (dateCol && !headers.includes(dateCol)) {
+                        updateStatus(`Warning: Optional date column header '${dateCol}' not found. Proceeding without date validation. Found: ${headers.join(', ')}`, 'warning');
+                        // Continue processing without date checks
+                    }
+
+
+                    updateStatus('Cleaning and validating data...');
+                    // Deep copy original data to cleanedData to avoid modifying original
+                    cleanedData = JSON.parse(JSON.stringify(originalData));
+
+                    // --- Data Cleaning & Validation ---
+                    cleanedData.forEach((row, index) => {
+                        const originalRow = originalData[index]; // For comparison
+                        const rowIndexForReport = index + 2; // User-friendly row number (1-based + header)
+
+                        // 1. Address Standardization
+                        if (row[addressCol]) {
+                            const originalAddress = row[addressCol];
+                            row[addressCol] = standardizeAddress(originalAddress);
+                            if (row[addressCol] !== originalAddress) {
+                                reportLog.changes.push(`Row ${rowIndexForReport}: Standardized address <code class="code">${originalAddress}</code> to <code class="code">${row[addressCol]}</code>.`);
+                            }
+                        }
+
+                        // 2. Name Normalization (for duplicate check) - doesn't change data, just for comparison
+                        row._normalizedName = normalizeString(row[nameCol]);
+                        row._normalizedAddress = normalizeString(row[addressCol]); // Use standardized address
+
+                        // 3. Date Validation
+                        if (dateCol && headers.includes(dateCol) && row[dateCol]) {
+                            if (!isValidDate(row[dateCol])) {
+                                reportLog.manualReview.push(`Row ${rowIndexForReport}: Invalid or non-standard date format <code class="code">${row[dateCol]}</code> in column '${dateCol}'.`);
+                            }
+                        }
+                        // Add original index for sorting later
+                        row._originalIndex = index;
+                    });
+
+                    // 4. Duplicate Detection (Basic)
+                    detectDuplicates(nameCol, addressCol);
+
+                    updateStatus('Generating report and preview...');
+                    generateReport();
+                    generatePreviewTable();
+                    resultsSection.style.display = 'block';
+                    downloadCsvButton.style.display = 'inline-block';
+                    updateStatus('Processing complete.', 'success');
+
+                } catch (error) {
+                    updateStatus(`An error occurred: ${error.message}`, 'error');
+                    console.error(error);
+                } finally {
+                    processButton.disabled = false;
+                }
+            };
+
+            reader.onerror = function() {
+                updateStatus('Error reading file.', 'error');
+                processButton.disabled = false;
+            };
+
+            reader.readAsText(file);
+        }
+
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length < 2) {
+                updateStatus('Error: CSV file needs at least a header row and one data row.', 'error');
+                return null;
+            }
+
+            // Basic header split, assumes simple comma separation
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '')); // Remove surrounding quotes if any
+
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                // More robust split needed for commas within quoted fields.
+                // This is a simplified version. Consider library like PapaParse for production.
+                const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+                if (values.length === headers.length) {
+                    const rowObject = {};
+                    headers.forEach((header, index) => {
+                        rowObject[header] = values[index];
+                    });
+                    data.push(rowObject);
+                } else {
+                     reportLog.manualReview.push(`Row ${i + 1}: Skipped due to incorrect number of columns (expected ${headers.length}, found ${values.length}). Line: <code class="code">${lines[i]}</code>`);
+                }
+            }
+             if (data.length === 0 && reportLog.manualReview.length > 0) {
+                 updateStatus('Error: No valid data rows found. Check CSV format and column counts.', 'error');
+                 generateReport(); // Show parsing errors
+                 resultsSection.style.display = 'block';
+                 cleanedDataPreviewDiv.style.display = 'none';
+                 return null;
+             } else if (data.length === 0) {
+                 updateStatus('Error: No data rows found after the header.', 'error');
+                 return null;
+             }
+
+            return { headers, data };
+        }
+
+        function standardizeAddress(address) {
+            if (!address) return address;
+            let stdAddress = address;
+            // Case-insensitive replacements using regular expressions
+            stdAddress = stdAddress.replace(/\bStreet\b\.?/gi, 'St');
+            stdAddress = stdAddress.replace(/\bAvenue\b\.?/gi, 'Ave');
+            stdAddress = stdAddress.replace(/\bRoad\b\.?/gi, 'Rd');
+            stdAddress = stdAddress.replace(/\bDrive\b\.?/gi, 'Dr');
+            stdAddress = stdAddress.replace(/\bBoulevard\b\.?/gi, 'Blvd');
+            stdAddress = stdAddress.replace(/\bLane\b\.?/gi, 'Ln');
+            stdAddress = stdAddress.replace(/\bCourt\b\.?/gi, 'Ct');
+            stdAddress = stdAddress.replace(/\bSuite\b\.?/gi, 'Ste');
+            stdAddress = stdAddress.replace(/\bApartment\b\.?/gi, 'Apt');
+            stdAddress = stdAddress.replace(/\bUnit\b\.?/gi, 'Unit'); // Keep Unit as is maybe?
+            // Add more rules as needed
+            stdAddress = stdAddress.replace(/\s+/g, ' ').trim(); // Normalize whitespace
+            return stdAddress;
+        }
+
+        function normalizeString(str) {
+            if (!str) return '';
+            return str.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"").replace(/\s+/g, '');
+        }
+
+        function isValidDate(dateString) {
+            if (!dateString) return true; // Empty is not invalid per se, just missing
+            // Try common formats (MM/DD/YYYY, YYYY-MM-DD, potentially others)
+            // This is basic, Date.parse() has quirks, moment.js or dayjs would be better
+            const formats = [
+                /^\d{1,2}\/\d{1,2}\/\d{4}$/, // MM/DD/YYYY or M/D/YYYY
+                /^\d{4}-\d{1,2}-\d{1,2}$/  // YYYY-MM-DD or YYYY-M-D
+            ];
+            if (formats.some(regex => regex.test(dateString))) {
+                // Basic regex match, try parsing to catch invalid dates like 02/30/2023
+                const timestamp = Date.parse(dateString.replace(/-/g, '/')); // Replace hyphens for broader compatibility
+                return !isNaN(timestamp);
+            }
+            return false; // Doesn't match expected patterns
+        }
+
+        function detectDuplicates(nameCol, addressCol) {
+            // Sort by normalized name then address to bring potential duplicates together
+             const sortedData = [...cleanedData].sort((a, b) => {
+                const nameComp = a._normalizedName.localeCompare(b._normalizedName);
+                if (nameComp !== 0) return nameComp;
+                return a._normalizedAddress.localeCompare(b._normalizedAddress);
+            });
+
+            const potentialDuplicateSets = [];
+            let currentSet = [];
+
+            for (let i = 0; i < sortedData.length - 1; i++) {
+                const row1 = sortedData[i];
+                const row2 = sortedData[i+1];
+
+                // Check if normalized name AND address are identical
+                if (row1._normalizedName && row1._normalizedAddress &&
+                    row1._normalizedName === row2._normalizedName &&
+                    row1._normalizedAddress === row2._normalizedAddress)
+                {
+                    if (currentSet.length === 0) {
+                        currentSet.push(row1._originalIndex + 2); // Add first row index + 2 for reporting
+                    }
+                    currentSet.push(row2._originalIndex + 2); // Add second row index + 2 for reporting
+                } else {
+                     // If a set was being built, finalize it
+                     if (currentSet.length > 0) {
+                         potentialDuplicateSets.push([...new Set(currentSet)]); // Store unique indices
+                         currentSet = []; // Reset for the next potential set
+                     }
+                 }
+             }
+             // Final check for a set ending at the last element
+            if (currentSet.length > 0) {
+                potentialDuplicateSets.push([...new Set(currentSet)]);
+            }
+
+            potentialDuplicateSets.forEach(set => {
+                 reportLog.duplicates.push(`Rows ${set.join(', ')}: Potential duplicates based on similar Name and Address.`);
+            });
+        }
+
+
+        function generateReport() {
+            let reportHTML = '<h3>Processing Report</h3>';
+
+            if (reportLog.changes.length > 0) {
+                reportHTML += '<h4>Address Standardizations:</h4><ul>';
+                reportLog.changes.forEach(log => reportHTML += `<li>${log}</li>`);
+                reportHTML += '</ul>';
+            } else {
+                 reportHTML += '<p>No automatic address standardizations were made.</p>';
+            }
+
+             if (reportLog.duplicates.length > 0) {
+                reportHTML += '<h4>Potential Duplicates Found:</h4><ul>';
+                reportLog.duplicates.forEach(log => reportHTML += `<li class="highlight-issue">${log}</li>`);
+                reportHTML += '</ul>';
+            } else {
+                 reportHTML += '<p>No obvious duplicates found based on Name/Address matching.</p>';
+            }
+
+            if (reportLog.manualReview.length > 0) {
+                reportHTML += '<h4>Items for Manual Review:</h4><ul>';
+                reportLog.manualReview.forEach(log => reportHTML += `<li class="highlight-issue">${log}</li>`);
+                reportHTML += '</ul>';
+            } else {
+                reportHTML += '<p>No records flagged for immediate manual review (e.g., invalid dates, parsing issues).</p>';
+            }
+
+
+            reportDiv.innerHTML = reportHTML;
+        }
+
+        function generatePreviewTable() {
+             cleanedDataPreviewDiv.style.display = 'block';
+            const previewData = cleanedData.slice(0, 10); // Show first 10 rows
+            let tableHTML = '<thead><tr>';
+            const displayHeaders = headers.filter(h => !h.startsWith('_')); // Exclude internal helper columns
+            displayHeaders.forEach(header => tableHTML += `<th>${header}</th>`);
+            tableHTML += '</tr></thead><tbody>';
+
+            previewData.forEach((row, index) => {
+                const originalRowIndex = row._originalIndex; // Get original index before sorting
+                const originalRow = originalData[originalRowIndex];
+                 const reportRowIndex = originalRowIndex + 2; // For matching with report logs
+
+                tableHTML += '<tr>';
+                displayHeaders.forEach(header => {
+                    let cellContent = row[header] ?? ''; // Handle potential undefined
+                    let cellClass = '';
+
+                    // Highlight changes (e.g., standardized address)
+                     if (reportLog.changes.some(log => log.startsWith(`Row ${reportRowIndex}:`) && log.includes(`column '${header}'`)|| log.includes(`address <code class="code">${originalRow[header]}`))) {
+                         cellClass = 'highlight-change';
+                     }
+
+                    // Highlight issues (e.g., invalid date)
+                    if (reportLog.manualReview.some(log => log.startsWith(`Row ${reportRowIndex}:`) && log.includes(`column '${header}'`))) {
+                        cellClass = 'highlight-issue';
+                    }
+
+                     // Highlight rows identified as potential duplicates
+                     if (reportLog.duplicates.some(log => log.startsWith(`Rows`) && log.includes(` ${reportRowIndex}`))) {
+                          // Append to existing class if needed
+                         cellClass = cellClass ? `${cellClass} highlight-issue` : 'highlight-issue';
+                     }
+
+
+                    tableHTML += `<td class="${cellClass}">${escapeHtml(cellContent)}</td>`;
+                });
+                tableHTML += '</tr>';
+            });
+
+            tableHTML += '</tbody>';
+            previewTable.innerHTML = tableHTML;
+        }
+
+        function downloadCleanedCsv() {
+            if (cleanedData.length === 0) {
+                alert("No cleaned data available to download.");
+                return;
+            }
+
+            // Prepare CSV content
+             const displayHeaders = headers.filter(h => !h.startsWith('_')); // Exclude internal helper columns
+            let csvContent = displayHeaders.join(',') + '\n'; // Header row
+
+            cleanedData.forEach(row => {
+                const rowValues = displayHeaders.map(header => {
+                    let value = row[header] ?? ''; // Handle null/undefined
+                    // Basic CSV escaping: quote if it contains comma, double quote, or newline
+                    if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+                        value = `"${value.replace(/"/g, '""')}"`; // Escape double quotes
+                    }
+                    return value;
+                });
+                csvContent += rowValues.join(',') + '\n';
+            });
+
+            // Create and trigger download link
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", "cleaned_customer_data.csv");
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+
+        function updateStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = type; // Use class for styling (e.g., 'error', 'success', 'info')
+        }
+
+        function escapeHtml(unsafe) {
+            if (unsafe === null || typeof unsafe === 'undefined') return '';
+            return String(unsafe) // Ensure it's a string
+                 .replace(/&/g, "&")
+                 .replace(/</g, "<")
+                 .replace(/>/g, ">")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#39;");
+        }
+
+    </script>
+</body>
+</html>
